@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using CleanLaboratory.Gameplay;
 using TMPro;
@@ -9,29 +10,49 @@ using UnityEngine.SceneManagement;
 
 public class GameTimer : NetworkBehaviour
 {
-    // Easy access for other scripts: GameTimer.Instance, GameTimer.GameIsOver
+    // Easy access for other scripts
     public static GameTimer Instance { get; private set; }
     public static bool GameIsOver => Instance != null && Instance.IsGameOver.Value;
 
-    // Fired on EVERY machine when the game ends (used by the scoreboard, FP2-6)
+    // Fired on EVERY machine after the "TIME'S UP!" animation (used by the scoreboard, FP2-6)
     public static event Action OnGameEnded;
 
     [Header("Settings")]
-    [SerializeField] private float gameDuration = 90f;          // 1 min 30
+    [SerializeField] private float gameDuration = 90f;
     [SerializeField] private string gameSceneName = "Laboratory";
 
-    [Header("UI")]
+    [Header("UI - Timer")]
     [SerializeField] private TMP_Text timerText;
+    [SerializeField] private RectTransform timerPanel;            // the part that pulses
+    [SerializeField] private Color normalColor = Color.white;
+    [SerializeField] private Color warningColor = new Color(1f, 0.75f, 0.2f);   // orange (≤ 30 s)
+    [SerializeField] private Color dangerColor = new Color(1f, 0.3f, 0.25f);    // red (≤ 10 s)
 
-    // Server time at which the game ends. -1 = not started yet. Written ONCE by the server.
+    [Header("UI - Time's up")]
+    [SerializeField] private CanvasGroup timeUpPanel;
+    [SerializeField] private RectTransform timeUpText;
+    [SerializeField] private float timeUpDisplayDuration = 2.5f;
+
+    [Header("Sounds (optional)")]
+    [SerializeField] private AudioSource audioSource;
+    [SerializeField] private AudioClip tickClip;                   // last 5 seconds
+    [SerializeField] private AudioClip endClip;                    // at 00:00
+
+    // Server time when the game ends. -1 = not started. Written ONCE by the server.
     private readonly NetworkVariable<double> endTime = new NetworkVariable<double>(-1);
 
     // Synced to everyone. Only the server sets it to true.
     public readonly NetworkVariable<bool> IsGameOver = new NetworkVariable<bool>(false);
 
+    private int lastShownSecond = -1;
+    private bool gameOverApplied = false;
+
+    // ================= SETUP =================
+
     private void Awake()
     {
         Instance = this;
+        HideTimeUpPanel();
     }
 
     public override void OnNetworkSpawn()
@@ -41,7 +62,6 @@ public class GameTimer : NetworkBehaviour
         if (IsServer)
             NetworkManager.SceneManager.OnLoadEventCompleted += OnLoadEventCompleted;
 
-        // A client that spawns after the end still freezes
         if (IsGameOver.Value) ApplyGameOverLocally();
     }
 
@@ -55,7 +75,7 @@ public class GameTimer : NetworkBehaviour
         if (Instance == this) Instance = null;
     }
 
-    // ===== SERVER: start when everyone has loaded the game scene =====
+    // ================= SERVER: start when everyone has loaded =================
 
     private void OnLoadEventCompleted(string sceneName, LoadSceneMode mode,
                                       List<ulong> clientsCompleted, List<ulong> clientsTimedOut)
@@ -66,45 +86,69 @@ public class GameTimer : NetworkBehaviour
         Debug.Log($"[GameTimer] Game started: {gameDuration} seconds.");
     }
 
-    // ===== EVERY MACHINE: display / SERVER: check the end =====
+    // ================= EVERY FRAME =================
 
     private void Update()
     {
-        if (!IsSpawned) return;
+        if (!IsSpawned || gameOverApplied) return;
 
-        // Not started yet → show the full duration
+        // Not started yet → show full duration, no effects
         if (endTime.Value < 0)
         {
-            SetTimerText(gameDuration);
+            UpdateTimerVisual(gameDuration, false);
             return;
         }
 
         double remaining = endTime.Value - NetworkManager.ServerTime.Time;
         if (remaining < 0) remaining = 0;
-        SetTimerText(remaining);
+
+        UpdateTimerVisual(remaining, true);
 
         // Only the SERVER decides the game is over
         if (IsServer && !IsGameOver.Value && remaining <= 0)
-            EndGame();
+        {
+            IsGameOver.Value = true;
+            Debug.Log("[GameTimer] Time is up! Game over.");
+        }
     }
 
-    private void SetTimerText(double seconds)
+    // ================= TIMER VISUALS =================
+
+    private void UpdateTimerVisual(double seconds, bool running)
     {
         if (timerText == null) return;
+
         int s = Mathf.CeilToInt((float)seconds);
+
+        // Text "01:30"
         timerText.text = $"{s / 60:00}:{s % 60:00}";
-        timerText.color = s <= 10 ? Color.red : Color.white; // last 10 seconds in red
+
+        // Color: white → orange (30 s) → red (10 s)
+        if (s <= 10) timerText.color = dangerColor;
+        else if (s <= 30) timerText.color = warningColor;
+        else timerText.color = normalColor;
+
+        // Tick sound once per second during the last 5 seconds
+        if (running && s != lastShownSecond)
+        {
+            lastShownSecond = s;
+            if (s <= 10 && s > 0) PlaySound(tickClip);
+        }
+
+        // Pulse during the last 10 seconds: big at each new second, then shrinks
+        if (timerPanel != null)
+        {
+            float scale = 1f;
+            if (running && s <= 10 && s > 0)
+            {
+                float t = (float)(seconds % 1.0);   // goes 0.99 → 0.00 during each second
+                scale = 1f + 0.15f * t * t;
+            }
+            timerPanel.localScale = Vector3.one * scale;
+        }
     }
 
-    // ===== SERVER: end the game =====
-
-    private void EndGame()
-    {
-        IsGameOver.Value = true; // sent to every client automatically
-        Debug.Log("[GameTimer] Time is up! Game over.");
-    }
-
-    // ===== EVERY MACHINE: react to the end =====
+    // ================= GAME OVER =================
 
     private void OnGameOverChanged(bool previous, bool current)
     {
@@ -113,7 +157,10 @@ public class GameTimer : NetworkBehaviour
 
     private void ApplyGameOverLocally()
     {
-        // Freeze MY player (each machine freezes its own)
+        if (gameOverApplied) return;
+        gameOverApplied = true;
+
+        // Freeze MY player
         var player = NetworkManager.Singleton.LocalClient?.PlayerObject;
         if (player != null)
         {
@@ -126,17 +173,77 @@ public class GameTimer : NetworkBehaviour
             var actions = player.GetComponent<PlayerAction>();
             if (actions != null) actions.enabled = false;
 
-            // Stop the walking animation (synced by ClientNetworkAnimator)
             var animator = player.GetComponentInChildren<Animator>();
             if (animator != null) animator.SetFloat("Speed", 0f);
         }
+
+        // Timer frozen at 00:00, red, normal size
+        if (timerText != null)
+        {
+            timerText.text = "00:00";
+            timerText.color = dangerColor;
+        }
+        if (timerPanel != null) timerPanel.localScale = Vector3.one;
 
         // Free the cursor (for the scoreboard)
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
 
-        if (timerText != null) timerText.text = "00:00";
+        PlaySound(endClip);
+        StartCoroutine(TimeUpAnimation());
+    }
 
+    // "TIME'S UP!": fade in + pop, wait, fade out, then tell the scoreboard
+    private IEnumerator TimeUpAnimation()
+    {
+        if (timeUpPanel != null)
+        {
+            // Fade in + pop (0.4 s)
+            float duration = 0.4f;
+            for (float t = 0; t < duration; t += Time.unscaledDeltaTime)
+            {
+                float k = t / duration;
+                timeUpPanel.alpha = k;
+                if (timeUpText != null)
+                {
+                    float ease = 1f - Mathf.Pow(1f - k, 3);          // ease-out
+                    timeUpText.localScale = Vector3.one * Mathf.Lerp(2f, 1f, ease);
+                }
+                yield return null;
+            }
+            timeUpPanel.alpha = 1f;
+            if (timeUpText != null) timeUpText.localScale = Vector3.one;
+
+            // Stay on screen
+            yield return new WaitForSecondsRealtime(timeUpDisplayDuration);
+
+            // Fade out (0.5 s)
+            duration = 0.5f;
+            for (float t = 0; t < duration; t += Time.unscaledDeltaTime)
+            {
+                timeUpPanel.alpha = 1f - t / duration;
+                yield return null;
+            }
+            HideTimeUpPanel();
+        }
+
+        // Now the scoreboard can appear
         OnGameEnded?.Invoke();
+    }
+
+    // ================= HELPERS =================
+
+    private void HideTimeUpPanel()
+    {
+        if (timeUpPanel == null) return;
+        timeUpPanel.alpha = 0f;
+        timeUpPanel.blocksRaycasts = false;   // never blocks clicks
+        timeUpPanel.interactable = false;
+    }
+
+    private void PlaySound(AudioClip clip)
+    {
+        if (audioSource != null && clip != null)
+            audioSource.PlayOneShot(clip);
     }
 }
