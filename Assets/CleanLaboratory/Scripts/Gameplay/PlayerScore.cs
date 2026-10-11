@@ -19,6 +19,12 @@ namespace CleanLaboratory.Gameplay
         {
             score.OnValueChanged += OnScoreChanged;
             UpdateScoreText(score.Value);
+
+            // test fp2-3 : just host attribute point
+            //if (IsHost)
+            //{
+            //    AddScore(10);
+            //}
         }
 
         public override void OnNetworkDespawn()
