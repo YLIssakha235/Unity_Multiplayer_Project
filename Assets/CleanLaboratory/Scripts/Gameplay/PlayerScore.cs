@@ -15,6 +15,8 @@ namespace CleanLaboratory.Gameplay
             NetworkVariableWritePermission.Server
         );
 
+        public int CurrentScore => score.Value;
+
         public override void OnNetworkSpawn()
         {
             score.OnValueChanged += OnScoreChanged;
@@ -24,6 +26,15 @@ namespace CleanLaboratory.Gameplay
             //if (IsHost)
             //{
             //    AddScore(10);
+            //}
+
+            // test fp2-6 
+            //if (IsServer)
+            //{
+            //    if(OwnerClientId == 0)
+            //        AddScore(10);
+            //    else
+            //        AddScore(20);
             //}
         }
 
