@@ -1,5 +1,6 @@
 using Unity.Netcode;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 public class LaunchGameButton : NetworkBehaviour
@@ -25,12 +26,26 @@ public class LaunchGameButton : NetworkBehaviour
     {
         Debug.Log("LAUNCH GAME CLICKED");
 
-        if (IsServer)
+        // 1. Security Check: Only the Server/Host is allowed to clean up and launch the game
+        if (!IsServer) return;
+
+        // 2. Find all objects in the scene that have the LobbyObject "sticky note"
+        LobbyObject[] objectsToClean = FindObjectsOfType<LobbyObject>();
+
+        foreach (LobbyObject obj in objectsToClean)
         {
-            NetworkManager.SceneManager.LoadScene(
-                GameSceneName,
-                UnityEngine.SceneManagement.LoadSceneMode.Single
-            );
+            NetworkObject netObj = obj.GetComponent<NetworkObject>();
+
+            // If it is a NetworkObject and is currently spawned, despawn it
+            if (netObj != null && netObj.IsSpawned)
+            {
+                // Passing 'true' tells Netcode to despawn AND destroy the GameObject on all clients
+                netObj.Despawn(true);
+            }
         }
+
+        // 3. Finally, load the Game scene for all connected players
+        // (Make sure your scene is exactly named "Game" in your Build Settings)
+        NetworkManager.Singleton.SceneManager.LoadScene("Laboratory", LoadSceneMode.Single);
     }
 }

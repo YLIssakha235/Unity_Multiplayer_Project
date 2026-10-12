@@ -116,6 +116,31 @@ namespace CleanLaboratory.Gameplay
             Look();
         }
 
+        // FP2-1 placement des joeurs a leur point d'apparition dans le laboratoire
+        public void TeleportToSpawnPoint(Vector3 position, Quaternion rotation)
+        {
+            if (!IsOwner)
+                return;
+
+            _controller.enabled = false;
+
+            transform.SetPositionAndRotation(position, rotation);
+            _verticalVelocity = 0f;
+
+            _controller.enabled = true;
+        }
+
+        // fp2-1 demader au joeur proprietraie de rejoindre son point d'apparition 
+        [ClientRpc]
+        public void TeleportToSpawnPointClientRpc(Vector3 position, Quaternion rotation)
+        {
+            if (!IsOwner)
+                return;
+
+            TeleportToSpawnPoint(position, rotation);
+        }
+
+
         #endregion
 
         #region Netcode
