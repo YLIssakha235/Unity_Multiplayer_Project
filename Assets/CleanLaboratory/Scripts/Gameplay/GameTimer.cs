@@ -189,6 +189,8 @@ public class GameTimer : NetworkBehaviour
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
 
+        // Stop any tick still playing, then play the end sound
+        if (audioSource != null) audioSource.Stop();
         PlaySound(endClip);
         StartCoroutine(TimeUpAnimation());
     }
