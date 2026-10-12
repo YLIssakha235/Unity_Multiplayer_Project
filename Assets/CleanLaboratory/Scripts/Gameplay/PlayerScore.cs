@@ -9,6 +9,8 @@ namespace CleanLaboratory.Gameplay
         [SerializeField]
         private TMP_Text scoreText;
 
+
+
         private NetworkVariable<int> score = new NetworkVariable<int>(
             0,
             NetworkVariableReadPermission.Everyone,
